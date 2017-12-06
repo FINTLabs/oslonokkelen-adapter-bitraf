@@ -1,0 +1,18 @@
+version: "3.3"
+
+services:
+
+  adapter:
+    image: dtr.rogfk.no/k48402217/oslonokkelen-adapter-bitraf
+    #build: .
+    restart: on-failure
+    environment:
+      TZ: Europe/Oslo
+      springfox.title: "Oslonokkelen Adapter for Bitraf locks"
+      fint.adapter.organizations: las.oslo.no
+      fint.adapter.sse-endpoint: https://play-with-fint.felleskomponent.no/ressurser/lasstyring/provider/sse/%s
+      fint.adapter.status-endpoint: https://play-with-fint.felleskomponent.no/ressurser/lasstyring/provider/status
+      fint.adapter.response-endpoint: https://play-with-fint.felleskomponent.no/ressurser/lasstyring/provider/response
+      oslo.las.backend.url: "FIXME"
+      oslo.las.backend.username: "FIXME"
+      oslo.las.backend.password: "FIXME"
