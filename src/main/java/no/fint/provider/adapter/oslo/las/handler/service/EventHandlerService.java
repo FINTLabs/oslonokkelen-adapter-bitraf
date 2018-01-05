@@ -1,7 +1,10 @@
 package no.fint.provider.adapter.oslo.las.handler.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import no.fint.event.model.Event;
+import no.fint.event.model.ResponseStatus;
 import no.fint.event.model.Status;
 import no.fint.event.model.health.Health;
 import no.fint.event.model.health.HealthStatus;
@@ -18,8 +21,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import java.io.IOException;
 import java.math.BigDecimal;
-import java.util.Date;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * The EventHandlerService receives the <code>event</code> from SSE endpoint (provider) in the {@link #handleEvent(Event)} method.
@@ -55,6 +60,7 @@ public class EventHandlerService {
             if (event != null && eventStatusService.verifyEvent(event).getStatus() == Status.ADAPTER_ACCEPTED) {
                 LasstyringActions action = LasstyringActions.valueOf(event.getAction());
                 Event<FintResource> responseEvent = new Event<>(event);
+                responseEvent.setStatus(Status.ADAPTER_RESPONSE);
 
                 switch (action) {
                     case GET_ALL_LAS:
@@ -65,11 +71,8 @@ public class EventHandlerService {
                         break;
                     default:
                         responseEvent.setStatus(Status.ADAPTER_REJECTED);
-                        eventResponseService.postResponse(responseEvent);
-                        return;
                 }
 
-                responseEvent.setStatus(Status.ADAPTER_RESPONSE);
                 eventResponseService.postResponse(responseEvent);
             }
         }
@@ -81,18 +84,18 @@ public class EventHandlerService {
         return result;
     }
 
-    static Las mapLas(String name, Lock state) {
+    Las mapLas(String name, Lock state) {
         Las las = new Las();
         las.setSystemId(getIdentifikator(name));
         las.setStatus(getStatus(state.status));
         if (state.last_seen != null) {
             las.setSistsett(new Date(state.last_seen.multiply(BigDecimal.valueOf(1000)).longValue()));
         }
-        log.info("Lås: {}", las);
+        log.info("Las: {}", las);
         return las;
     }
 
-    private static String getStatus(int status) {
+    private String getStatus(int status) {
         switch (status) {
             case 200:
                 return "ukjent";
@@ -103,14 +106,52 @@ public class EventHandlerService {
         }
     }
 
+    private Las unmarshal(String input) {
+        ObjectMapper mapper = new ObjectMapper();
+        try {
+            return mapper.readValue(input, Las.class);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /**
      * Example of handling action
      *
      * @param event
      * @param responseEvent Event containing the response
      */
-    private void onUpdateLas(Event event, Event<FintResource> responseEvent) {
-        log.info("UpdateLas {}", event);
+    private void onUpdateLas(Event<String> event, Event<FintResource> responseEvent) {
+        log.info("UpdateLas {} {}", event, event.getData());
+        // FIXME: Explicit unmarshalling of JSON
+        Optional<Las> input = event.getData().stream().map(this::unmarshal).filter(Objects::nonNull).findAny();
+        log.info("Input(s): {}", input);
+        if (input.isPresent()) {
+            Las las = input.get();
+            String id = las.getSystemId().getIdentifikatorverdi();
+            switch (las.getStatus().toUpperCase()) {
+                case "OPENED":
+                case "UNLOCKED":
+                case "SESAME":
+                    if (backend.unlock(id)) {
+                        responseEvent.setResponseStatus(ResponseStatus.ACCEPTED);
+                        las.setStatus("opened");
+                        responseEvent.setData(Collections.singletonList(FintResource.with(las)));
+                    }
+                    break;
+                case "CLOSED":
+                case "LOCKED":
+                    if (backend.lock(id)) {
+                        responseEvent.setResponseStatus(ResponseStatus.ACCEPTED);
+                        las.setStatus("closed");
+                        responseEvent.setData(Collections.singletonList(FintResource.with(las)));
+                    }
+                    break;
+                default:
+                    responseEvent.setResponseStatus(ResponseStatus.REJECTED);
+                    responseEvent.setMessage("Unknown lock state requested: " + las.getStatus());
+            }
+        }
     }
 
     /**
@@ -126,12 +167,7 @@ public class EventHandlerService {
             log.error("Invalid result!!");
             responseEvent.setStatus(Status.ERROR);
         } else {
-            locks.doors.forEach((k, v) -> {
-                log.info("{} -> {}", k, v);
-                Las l = mapLas(k, v);
-                FintResource r = FintResource.with(l);
-                responseEvent.addData(r);
-            });//entrySet().stream().map(e -> mapLas(e.getKey(), e.getValue())).map(FintResource::with).forEach(responseEvent::addData);
+            locks.doors.forEach((k, v) -> responseEvent.addData(FintResource.with(mapLas(k, v))));
         }
     }
 
@@ -168,9 +204,6 @@ public class EventHandlerService {
         return result != null && result.doors != null;
     }
 
-    /**
-     * Data used in examples
-     */
     @PostConstruct
     void init() {
         log.info("Velkommen.");
