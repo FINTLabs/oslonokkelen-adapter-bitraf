@@ -6,9 +6,17 @@ springfox:
  version: '@version@'
 
 base-url: https://play-with-fint.felleskomponent.no/ressurser/lasstyring/provider
+
+oslo:
+  las:
+    backend:
+      url: http://dlock.trygvis.io
+      username:
+      password:
+
 fint:
  adapter:
-  organizations: las.oslo.no
+  organizations: las1.oslo.no
   sse-endpoint: ${base-url}/sse/%s
   status-endpoint: ${base-url}/status
   response-endpoint: ${base-url}/response
